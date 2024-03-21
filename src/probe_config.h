@@ -29,7 +29,10 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
-#if false
+#define PROBE_INFO true
+#define PROBE_DEBUG true
+
+#if PROBE_INFO
 #define probe_info(format,args...) \
 do { \
 	vTaskSuspendAll(); \
@@ -41,7 +44,7 @@ do { \
 #endif
 
 
-#if false
+#if PROBE_DEBUG
 #define probe_debug(format,args...) \
 do { \
 	vTaskSuspendAll(); \

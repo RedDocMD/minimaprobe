@@ -185,6 +185,123 @@ bool dap_edpt_xfer_cb(uint8_t __unused rhport, uint8_t ep_addr, xfer_result_t re
 	else return false;
 }
 
+static void render_dap_transfer_req(const uint8_t *buf)
+{
+	int req = buf[3], cnt = buf[2];
+	const uint32_t *wordptr;
+	probe_info("DAP_Transfer => Idx = %d, Cnt = %d, ", buf[1], cnt);
+	if (req & 0x1)
+		probe_info("Access port, ");
+	else
+		probe_info("Debug port, ");
+	if (req & 0x2)
+		probe_info("Write, ");
+	else
+	 	probe_info("Read, ");
+	probe_info("A[3:2] = %d", (req & 0xC) >> 2);
+	if (req & 0x80)
+		probe_info(", Timestamp");
+	else
+	 	probe_info(", No timestamp");
+	if (cnt > 0) {
+		wordptr = (const uint32_t *)(buf + 4);
+		probe_info(", Data = ");
+		for (int i = 0; i < cnt; i++)
+			probe_info(" 0x%08lx", wordptr[i]);
+	}
+}
+
+static void render_dap_transfer_resp(const uint8_t *buf)
+{
+	int resp = buf[2], cnt = buf[1];
+	const uint32_t *wordptr;
+	probe_info("DAP_Transfer => Cnt = %d, ", cnt);
+	int ack = resp & 0x7;
+	if (ack == 1)
+		probe_info("OK (or FAULT for JTAG)");
+	else if (ack == 2)
+		probe_info("WAIT");
+	else if (ack == 4)
+		probe_info("FAULT");
+	else if (ack == 7)
+		probe_info("NO_ACK");
+	else
+	 	probe_info("Weird ACK = %d", ack);
+	if (resp & 0x8)
+		probe_info(", Protocol Error (SWD)");
+	if (resp & 0x10)
+		probe_info(", Value mismatch");
+	probe_info(", Timestamp = %ld", *(const uint32_t *)&buf[3]);
+	if (cnt > 0) {
+		probe_info(", Data = ");
+		wordptr = (const uint32_t *)(buf + 7);
+		for (int i = 0; i < cnt; i++)
+			probe_info(" 0x%08lx", wordptr[i]);
+	}
+}	
+
+static void render_dap_req(const uint8_t *buf)
+{
+	uint8_t cmd;
+
+	probe_info("DAP Request: ");
+	cmd = buf[0];
+	switch (cmd) {
+	case ID_DAP_Connect:
+		if (buf[1] == 0)
+			probe_info("DAP_Connect => Default");
+		else if (buf[1] == 1)
+			probe_info("DAP_Connect => SWD");
+		else if (buf[1] == 2)
+			probe_info("DAP_Connect => JTAG");
+		break;
+	case ID_DAP_SWJ_Clock:
+		probe_info("DAP_SWJ_Clock => %ld Hz", *(uint32_t *)&buf[1]);
+		break;
+	case ID_DAP_SWJ_Sequence:
+		probe_info("DAP_SWJ_Sequence => %d bits", buf[1]);
+		break;
+	case ID_DAP_Transfer:
+		render_dap_transfer_req(buf);
+		break;
+	}
+	probe_info("\n");
+}
+
+static void render_dap_resp(const uint8_t *buf)
+{
+	uint8_t cmd;
+
+	cmd = buf[0];
+	probe_info("DAP Response: ");
+	switch (cmd) {
+	case ID_DAP_Connect:
+		if (buf[1] == 0)
+			probe_info("DAP_Connect => Init failed");
+		else if (buf[1] == 1)
+			probe_info("DAP_Connect => Init SWD");
+		else if (buf[1] == 2)
+			probe_info("DAP_Connect => Init JTAG");
+		break;
+	case ID_DAP_SWJ_Clock:
+		if (buf[1] == 0)
+			probe_info("DAP_SWJ_Clock => OK");
+		else if (buf[1] == 0xFF)
+			probe_info("DAP_SWJ_Clock => FAIL");
+		break;
+	case ID_DAP_SWJ_Sequence:
+		if (buf[1] == 0)
+			probe_info("DAP_SWJ_Sequence => OK");
+		else if (buf[1] == 0xFF)
+			probe_info("DAP_SWJ_Sequence => FAIL");
+		break;
+	case ID_DAP_Transfer:
+		render_dap_transfer_resp(buf);
+		break;
+	}
+	probe_info("\n");
+}
+
 void dap_thread(void *ptr)
 {
 	uint32_t n;
@@ -198,7 +315,7 @@ void dap_thread(void *ptr)
 			 */
 			n = USBRequestBuffer.rptr;
 			while (USBRequestBuffer.data[n % DAP_PACKET_COUNT][0] == ID_DAP_QueueCommands) {
-				probe_info("%u %u DAP queued cmd %s len %02x\n",
+				probe_info("%lu %lu DAP queued cmd %s len %02x\n",
 					       USBRequestBuffer.wptr, USBRequestBuffer.rptr,
 					       dap_cmd_string[USBRequestBuffer.data[n % DAP_PACKET_COUNT][0]], USBRequestBuffer.data[n % DAP_PACKET_COUNT][1]);
 				USBRequestBuffer.data[n % DAP_PACKET_COUNT][0] = ID_DAP_ExecuteCommands;
@@ -211,7 +328,7 @@ void dap_thread(void *ptr)
 			}
 			// Read a single packet from the USB buffer into the DAP Request buffer
 			memcpy(DAPRequestBuffer, RD_SLOT_PTR(USBRequestBuffer), DAP_PACKET_SIZE);
-			probe_info("%u %u DAP cmd %s len %02x\n",
+			probe_info("%lu %lu DAP cmd %s len %02x\n",
 				       USBRequestBuffer.wptr, USBRequestBuffer.rptr,
 				       dap_cmd_string[DAPRequestBuffer[0]], DAPRequestBuffer[1]);
 			USBRequestBuffer.rptr++;
@@ -226,8 +343,10 @@ void dap_thread(void *ptr)
 				xTaskResumeAll();
 			}
 
+			render_dap_req(DAPRequestBuffer);
 			_resp_len = DAP_ExecuteCommand(DAPRequestBuffer, DAPResponseBuffer);
-			probe_info("%u %u DAP resp %s\n",
+			render_dap_resp(DAPResponseBuffer);
+			probe_info("%lu %lu DAP resp %s\n",
 					USBResponseBuffer.wptr, USBResponseBuffer.rptr,
 					dap_cmd_string[DAPResponseBuffer[0]]);
 
