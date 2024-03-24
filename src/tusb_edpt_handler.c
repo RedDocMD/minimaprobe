@@ -195,9 +195,9 @@ static void render_dap_transfer_req(const uint8_t *buf)
 	else
 		probe_info("Debug port, ");
 	if (req & 0x2)
-		probe_info("Write, ");
+		probe_info("Read, ");
 	else
-	 	probe_info("Read, ");
+	 	probe_info("Write, ");
 	probe_info("A[3:2] = %d", (req & 0xC) >> 2);
 	if (req & 0x80)
 		probe_info(", Timestamp");
@@ -231,10 +231,10 @@ static void render_dap_transfer_resp(const uint8_t *buf)
 		probe_info(", Protocol Error (SWD)");
 	if (resp & 0x10)
 		probe_info(", Value mismatch");
-	probe_info(", Timestamp = %ld", *(const uint32_t *)&buf[3]);
+	// probe_info(", Timestamp = %ld", *(const uint32_t *)&buf[3]);
 	if (cnt > 0) {
 		probe_info(", Data = ");
-		wordptr = (const uint32_t *)(buf + 7);
+		wordptr = (const uint32_t *)(buf + 3);
 		for (int i = 0; i < cnt; i++)
 			probe_info(" 0x%08lx", wordptr[i]);
 	}
